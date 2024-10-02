@@ -1,0 +1,6 @@
+venv/
+client.json
+cert.pem
+key.pem
+*.faiss
+__pycache__/
