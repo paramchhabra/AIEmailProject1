@@ -11,6 +11,7 @@ import requests
 import base64
 from bs4 import BeautifulSoup
 from embedclassify import *
+from sql import *
 
 # Flask app setup
 app = flask.Flask(__name__)
@@ -20,48 +21,50 @@ app.secret_key = os.urandom(24)
 CLIENT_SECRETS_FILE = "client.json"
 
 # Scopes required to read the user's Gmail
-SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
-API_SERVICE_NAME = 'gmail'
-API_VERSION = 'v1'
+SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+API_SERVICE_NAME = "gmail"
+API_VERSION = "v1"
+
 
 # The endpoint for the home page
-@app.route('/')
+@app.route("/")
 def index():
     return "Hello world"
 
+
 # The endpoint to authorize the user
-@app.route('/authorize')
+@app.route("/authorize")
 def authorize():
     # Create a flow instance to manage the OAuth 2.0 Authorization Grant Flow steps.
     flow = Flow.from_client_secrets_file(
         CLIENT_SECRETS_FILE,
         scopes=SCOPES,
-        redirect_uri=flask.url_for('oauth2callback', _external=True)
+        redirect_uri=flask.url_for("oauth2callback", _external=True),
     )
 
     # Generate authorization URL for the user to grant access
     authorization_url, state = flow.authorization_url(
-        access_type='offline', 
-        include_granted_scopes='true'
+        access_type="offline", include_granted_scopes="true"
     )
 
     # Store the state in the session to validate later
-    flask.session['state'] = state
+    flask.session["state"] = state
 
     return flask.redirect(authorization_url)
 
+
 # Callback endpoint where Google redirects after user authentication
-@app.route('/oauth2callback')
+@app.route("/oauth2callback")
 def oauth2callback():
-    state = flask.session.get('state')
+    state = flask.session.get("state")
     if not state:
-        return 'State not found in session.', 400
+        return "State not found in session.", 400
 
     flow = Flow.from_client_secrets_file(
         CLIENT_SECRETS_FILE,
         scopes=SCOPES,
         state=state,
-        redirect_uri=flask.url_for('oauth2callback', _external=True)
+        redirect_uri=flask.url_for("oauth2callback", _external=True),
     )
 
     try:
@@ -70,76 +73,114 @@ def oauth2callback():
         return f"An error occurred while fetching the token: {e}"
 
     credentials = flow.credentials
-    flask.session['credentials'] = credentials_to_dict(credentials)
+    flask.session["credentials"] = credentials_to_dict(credentials)
 
-    return flask.redirect(flask.url_for('gmail_data'))
+    return flask.redirect(flask.url_for("gmail_data"))
 
 
-@app.route('/gmail_data')
+@app.route("/gmail_data")
 def gmail_data():
-    credentials = google.oauth2.credentials.Credentials(**flask.session['credentials'])
+    clear_data()
+    credentials = google.oauth2.credentials.Credentials(**flask.session["credentials"])
 
     # Build the Gmail service
     service = build(API_SERVICE_NAME, API_VERSION, credentials=credentials)
 
     try:
         # Retrieve the first batch of messages (up to 1000)
-        results = service.users().messages().list(userId='me', maxResults=1000).execute()
-        messages = results.get('messages', [])
+        results = (
+            service.users().messages().list(userId="me", maxResults=1000).execute()
+        )
+        messages = results.get("messages", [])
 
         if not messages:
             return "No new emails."
-        email_data = []
-        for message in messages[:10]:  # Limit to the first 10 emails
-            
-            msg = service.users().messages().get(userId='me', id=message['id']).execute()
-            headers = msg['payload'].get('headers', [])
+        email_data = ""
+        create()
+        for message in messages[:50]:  # Limit to the first 10 emails
+
+            msg = (
+                service.users().messages().get(userId="me", id=message["id"]).execute()
+            )
+            headers = msg["payload"].get("headers", [])
 
             # Extract relevant email headers
             email_details = {
-                "subject": next((header['value'] for header in headers if header['name'] == 'Subject'), "No Subject"),
-                "from": next((header['value'] for header in headers if header['name'] == 'From'), "Unknown Sender"),
-                "date": next((header['value'] for header in headers if header['name'] == 'Date'), "Unknown Date"),
+                "subject": next(
+                    (
+                        header["value"]
+                        for header in headers
+                        if header["name"] == "Subject"
+                    ),
+                    "No Subject",
+                ),
+                "from": next(
+                    (header["value"] for header in headers if header["name"] == "From"),
+                    "Unknown Sender",
+                ),
+                "date": next(
+                    (header["value"] for header in headers if header["name"] == "Date"),
+                    "Unknown Date",
+                ),
             }
 
             # Get the full message body, handling parts
-            email_details["message"] = get_email_body(msg['payload'])
-            
+            email_details["message"] = get_email_body(msg["payload"])
+
             index = 0
 
-            if email_details["message"].rfind("Vellore Institute of Technology (VIT), India -")==-1:
+            if (
+                email_details["message"].rfind(
+                    "Vellore Institute of Technology (VIT), India -"
+                )
+                == -1
+            ):
                 index = len(email_details["message"])
             else:
-                index = email_details["message"].rfind("Vellore Institute of Technology (VIT), India -")
+                index = email_details["message"].rfind(
+                    "Vellore Institute of Technology (VIT), India -"
+                )
 
             # Append email details to the email_data list
-            fromm = extract_sender_details(email_details['from'])
-            email_data.append(
-                f"SenderName: {fromm['SenderName']}|Date & Time: {email_details['date']}|Subject: {email_details['subject']}|SenderEmail: {fromm['SenderEmail']}|Text: {email_details['message'][:index]}"
+            fromm = extract_sender_details(email_details["from"])
+            email_data = (
+                f"SenderName: {fromm['SenderName']}|"
+                f"Date & Time: {email_details['date']}|"
+                f"Subject: {email_details['subject']}|"
+                f"SenderEmail: {fromm['SenderEmail']}|"
+                f"Text: {email_details['message'][:index]}"
             )
+            email_data = email_data.strip()
+            insert_email_to_db(email_data)
 
-        #testing
-        relevancy(email_data)
-        
+        # testing
+        # relevancy(email_data)
+        return "Added to sql"
+
     except googleapiclient.errors.HttpError as error:
         return f"An error occurred: {error}"
 
+@app.route("/get_gmail_data")
+def get_gmail():
+    email_data = retrieve_emails_from_db()
+    relevancy(email_data)
+    return "<br><br>".join(email_data)
+
+
 import re
+
 
 def extract_sender_details(sender_text):
     # Use regex to find the email enclosed in <>
-    match = re.search(r'<(.+?)>', sender_text)
-    
+    match = re.search(r"<(.+?)>", sender_text)
+
     # If an email is found, extract it; otherwise, set to "Unknown Email"
     sender_email = match.group(1) if match else "Unknown Email"
-    
+
     # Remove the email part from the text to get the sender name
-    sender_name = re.sub(r'<.*?>', '', sender_text).strip()
-    
-    return {
-        'SenderName': sender_name,
-        'SenderEmail': sender_email
-    }
+    sender_name = re.sub(r"<.*?>", "", sender_text).strip()
+
+    return {"SenderName": sender_name, "SenderEmail": sender_email}
 
 
 def clean_whitespace(text):
@@ -147,8 +188,9 @@ def clean_whitespace(text):
     Remove excessive whitespace from the text and limit it to at most two consecutive spaces.
     """
     # Replace multiple spaces with a single space
-    cleaned_text = re.sub(r'\s{3,}', '  ', text)  # Limit to at most two spaces
+    cleaned_text = re.sub(r"\s{3,}", "  ", text)  # Limit to at most two spaces
     return cleaned_text
+
 
 def get_email_body(payload):
     """
@@ -157,33 +199,36 @@ def get_email_body(payload):
     html_body = None
     plain_text_body = None
 
-    if 'parts' in payload:
-        for part in payload['parts']:
+    if "parts" in payload:
+        for part in payload["parts"]:
             # Handle multipart/alternative MIME type with sub-parts
-            if part['mimeType'] == 'multipart/alternative' and 'parts' in part:
-                for subpart in part['parts']:
-                    if subpart['mimeType'] == 'text/html' and 'data' in subpart['body']:
-                        html_body = decode_base64(subpart['body']['data'])
-                    elif subpart['mimeType'] == 'text/plain' and 'data' in subpart['body']:
-                        plain_text_body = decode_base64(subpart['body']['data'])
+            if part["mimeType"] == "multipart/alternative" and "parts" in part:
+                for subpart in part["parts"]:
+                    if subpart["mimeType"] == "text/html" and "data" in subpart["body"]:
+                        html_body = decode_base64(subpart["body"]["data"])
+                    elif (
+                        subpart["mimeType"] == "text/plain"
+                        and "data" in subpart["body"]
+                    ):
+                        plain_text_body = decode_base64(subpart["body"]["data"])
             # Handle normal HTML parts
-            elif part['mimeType'] == 'text/html' and 'data' in part['body']:
-                html_body = decode_base64(part['body']['data'])
+            elif part["mimeType"] == "text/html" and "data" in part["body"]:
+                html_body = decode_base64(part["body"]["data"])
             # Handle normal text/plain parts
-            elif part['mimeType'] == 'text/plain' and 'data' in part['body']:
-                plain_text_body = decode_base64(part['body']['data'])
+            elif part["mimeType"] == "text/plain" and "data" in part["body"]:
+                plain_text_body = decode_base64(part["body"]["data"])
             # Handle nested parts recursively
-            elif 'parts' in part:
+            elif "parts" in part:
                 nested_body = get_email_body(part)
                 if nested_body:  # If found nested body, return that
                     return nested_body
 
     # Handle the case where the email body is directly in the payload
-    if 'data' in payload['body']:
-        if payload['mimeType'] == 'text/html':
-            html_body = decode_base64(payload['body']['data'])
-        elif payload['mimeType'] == 'text/plain':
-            plain_text_body = decode_base64(payload['body']['data'])
+    if "data" in payload["body"]:
+        if payload["mimeType"] == "text/html":
+            html_body = decode_base64(payload["body"]["data"])
+        elif payload["mimeType"] == "text/plain":
+            plain_text_body = decode_base64(payload["body"]["data"])
 
     # If we have HTML content, extract text from it
     if html_body:
@@ -203,11 +248,11 @@ def decode_base64(data):
     # Add missing padding if necessary
     missing_padding = len(data) % 4
     if missing_padding:
-        data += '=' * (4 - missing_padding)
+        data += "=" * (4 - missing_padding)
 
     try:
         decoded_bytes = base64.urlsafe_b64decode(data)
-        return decoded_bytes.decode('utf-8')
+        return decoded_bytes.decode("utf-8")
     except Exception as e:
         print(f"Error decoding base64 data: {e}")
         return None
@@ -217,43 +262,50 @@ def extract_text_from_html(html):
     """
     Remove all HTML tags and extract the visible text content from the body.
     """
-    soup = BeautifulSoup(html, 'html.parser')
-    
+    soup = BeautifulSoup(html, "html.parser")
+
     # Extract the text from the <body> tag, if present
-    body = soup.find('body')
+    body = soup.find("body")
     if body:
         # Get text inside the body, stripping all tags and keeping the text content
-        return body.get_text(separator='\n', strip=True)
+        return body.get_text(separator="\n", strip=True)
     else:
         # If no body tag, extract text from the whole HTML content
-        return soup.get_text(separator='\n', strip=True)
-# Revoke token endpoint
-@app.route('/revoke')
-def revoke():
-    if 'credentials' not in flask.session:
-        return ('You need to authorize before revoking tokens.', 400)
+        return soup.get_text(separator="\n", strip=True)
 
-    credentials = google.oauth2.credentials.Credentials(**flask.session['credentials'])
-    revoke = requests.post('https://accounts.google.com/o/oauth2/revoke',
-        params={'token': credentials.token},
-        headers = {'content-type': 'application/x-www-form-urlencoded'})
+
+# Revoke token endpoint
+@app.route("/revoke")
+def revoke():
+    if "credentials" not in flask.session:
+        return ("You need to authorize before revoking tokens.", 400)
+
+    credentials = google.oauth2.credentials.Credentials(**flask.session["credentials"])
+    revoke = requests.post(
+        "https://accounts.google.com/o/oauth2/revoke",
+        params={"token": credentials.token},
+        headers={"content-type": "application/x-www-form-urlencoded"},
+    )
 
     if revoke.status_code == 200:
-        return 'Tokens successfully revoked.'
+        return "Tokens successfully revoked."
     else:
-        return 'Failed to revoke tokens.'
+        return "Failed to revoke tokens."
+
 
 # Helper function to convert credentials to a dictionary
 def credentials_to_dict(credentials):
-    return {'token': credentials.token,
-            'refresh_token': credentials.refresh_token,
-            'token_uri': credentials.token_uri,
-            'client_id': credentials.client_id,
-            'client_secret': credentials.client_secret,
-            'scopes': credentials.scopes}
+    return {
+        "token": credentials.token,
+        "refresh_token": credentials.refresh_token,
+        "token_uri": credentials.token_uri,
+        "client_id": credentials.client_id,
+        "client_secret": credentials.client_secret,
+        "scopes": credentials.scopes,
+    }
 
 
-
-if __name__ == '__main__':
-    app.run(host='localhost', port=5000, ssl_context=('cert.pem', 'key.pem'), debug=True)
-
+if __name__ == "__main__":
+    app.run(
+        host="localhost", port=5000, ssl_context=("cert.pem", "key.pem"), debug=True
+    )

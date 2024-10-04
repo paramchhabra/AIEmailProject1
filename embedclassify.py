@@ -21,11 +21,11 @@ def relevancy(email_data):
     # Save the index for future use (optional)
     faiss.write_index(index, 'email_index.faiss')
 
-    query = "what mail did i recieve from unstop regarding internships?"
+    query = "Is the coming saturday instructional day?"
     query_embedding = model.encode([query])
 
     # Search the index for the closest email(s)
-    k = 2  # Number of results to retrieve
+    k = 5  # Number of results to retrieve
     distances, indices = index.search(query_embedding, k)
 
     # Print the most relevant emails
