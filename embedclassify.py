@@ -1,6 +1,7 @@
 from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
+from qna import get_answer
 
 # Load a pre-trained SentenceTransformer model
 model = SentenceTransformer('all-MiniLM-L6-v2')
@@ -25,12 +26,18 @@ def relevancy(email_data):
     query_embedding = model.encode([query])
 
     # Search the index for the closest email(s)
-    k = 5  # Number of results to retrieve
+    k = 3  # Number of results to retrieve
     distances, indices = index.search(query_embedding, k)
-
+    relevant_emails = "\n\n".join([email_data[idx] for idx in indices[0]])
+    
     # Print the most relevant emails
-    print("Most relevant emails:")
+    # print("Most relevant emails:")
 
     
-    for idx in indices[0]:
-        print(email_data[idx])
+    # for idx in indices[0]:
+    #    print(email_data[idx])
+
+    answer = get_answer(relevant_emails, query)
+
+    # Print the answer from the QnA model
+    print(f"Answer: {answer}")

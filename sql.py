@@ -22,12 +22,22 @@ def insert_email_to_db(email_content):
 
     if email_content=="" or email_content is None:
         print("Content is NULL")
+        return False
 
     try:
+        cursor.execute('''SELECT COUNT(*) FROM email_embeddings WHERE email_data = ?''', (email_content,))
+        count = cursor.fetchone()[0]
+
+        if count > 0:
+            # If the email exists, return False
+            print("Email already exists in the database.")
+            return False
         cursor.execute('''INSERT INTO email_embeddings (email_data) VALUES (?)''', (email_content,))
         conn.commit()
+        return True
     except sqlite3.Error as e:
         print(f"An error occurred: {e}")
+        return False
 
 
 # Step 5: Function to retrieve email data and embeddings from the database
