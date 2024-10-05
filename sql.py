@@ -17,8 +17,7 @@ def create():
 
 # Step 4: Function to insert email content and embeddings into the database
 def insert_email_to_db(email_content):
-    # Convert the embedding array to a binary format (BLOB)
-    # embedding_blob = np.array(embedding).tobytes()
+   
 
     if email_content=="" or email_content is None:
         print("Content is NULL")
@@ -32,6 +31,7 @@ def insert_email_to_db(email_content):
             # If the email exists, return False
             print("Email already exists in the database.")
             return False
+        
         cursor.execute('''INSERT INTO email_embeddings (email_data) VALUES (?)''', (email_content,))
         conn.commit()
         return True
